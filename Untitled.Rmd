@@ -1,6 +1,15 @@
 ---
 title: "R Notebook"
+output: github_document
 ---
+
+```{r chunk_options, include=FALSE}
+if (capabilities("cairo")) {
+  knitr::opts_chunk$set(
+    dev.args = list(png = list(type = "cairo"))
+  )
+}
+```
 
 ```{r}
 library(tidyverse)
@@ -65,7 +74,11 @@ ke = 0.25
 cl = 3.5
 ytrue = 2.5*ka*ke/(cl*(ke-ka))*(exp(-ka*times) - exp(-ke*times))
 y = rlnorm(length(ytrue), log(ytrue), 0.12) 
+```
 
+```{r}
+prior_mu = 4.5
+prior_sd = 1.5
 
 #Generate prior curves
 prior_data = list(
@@ -74,10 +87,10 @@ prior_data = list(
   y = y,
   N = length(times),
   prior_only=1,
-  cl_mu = 7.0,
-  cl_sd = 1.0
+  cl_mu = prior_mu,
+  cl_sd = prior_sd
 )
-prior_fit = sampling(model, prior_data, control = list(adapt_delta = 0.9))
+prior_fit = sampling(model, prior_data, control = list(adapt_delta = 0.9), seed = 1234)
 
 posterior_data = list(
   times = times,
@@ -85,12 +98,13 @@ posterior_data = list(
   y = y,
   N = length(times),
   prior_only=0,
-  cl_mu = 7.0,
-  cl_sd = 1.0
+  cl_mu = prior_mu,
+  cl_sd = prior_sd
 )
-posterior_fit = sampling(model, posterior_data, control = list(adapt_delta = 0.99))
+posterior_fit = sampling(model, posterior_data, control = list(adapt_delta = 0.99), seed = 1234)
+```
 
-
+```{r}
 # Join on this later to do the plotting in ggplot2.
 dd = tibble(t = seq(0,12,length.out = 100), i = 1:100)
 ```
@@ -118,10 +132,12 @@ mle = optimize(domle, c(2.0, 8.0), maximum = T)$maximum
 
 
 ```{r}
+n_draws = 200
 
+prior_draws = prior_fit %>% 
+  spread_draws(CC[i], cl, n = n_draws, seed = 3)
 
-prior = prior_fit %>% 
-  spread_draws(CC[i], n = 100, seed = 3) %>% 
+prior = prior_draws %>% 
   left_join(dd)  %>% #left join so I can have the t variable to plot against 
   ggplot(aes(t, 
              CC, 
@@ -137,8 +153,9 @@ prior = prior_fit %>%
 data = prior_fit %>% 
   spread_draws(CC[i], 
                cl, 
-               n = 50, 
-               seed = 3) %>% 
+               # n = n_draws, 
+               seed = 3) %>%
+  filter(min(prior_draws$cl) <= cl & cl <= max(prior_draws$cl)) %>%
   mutate(ll = domle(cl)) %>%  #Color the lines by their LL
   left_join(dd)  %>% #left join so I can have the t variable to plot against 
   ggplot(aes(t, CC, group = .draw, color = ll))+
@@ -146,10 +163,12 @@ data = prior_fit %>%
   labs(x = 'Time Post Dose', 
        y = 'Concentration', 
        subtitle = 'Observed Data')+
-  scale_color_viridis(option = 'inferno', 
-                      direction = -1,
-                      limits = c(domle(9.5),domle(mle)) #this sets the colorbar scale
-                      )+
+  # scale_color_viridis(option = 'inferno',
+  scale_color_distiller(
+    direction = 1,
+    palette = "Blues"
+    #limits = c(domle(9.5), domle(mle)) #this sets the colorbar scale
+  ) +
   labs(color = 'Log Likelihood')+
   geom_point(data = tibble(times, yy), #plot observed data
              aes(times, yy), 
@@ -164,7 +183,7 @@ data = prior_fit %>%
 posterior = posterior_fit %>% 
   spread_draws(CC[i],
                cl, 
-               n = 50, 
+               n = n_draws/2, 
                seed = 3) %>% 
   mutate(ll = domle(cl)) %>% 
   left_join(dd)  %>% 
@@ -172,10 +191,7 @@ posterior = posterior_fit %>%
              CC, 
              group = .draw, 
              color = ll))+
-  geom_line(alpha = 0.5)+
-  scale_color_viridis(option = 'inferno',
-                      direction = -1,
-                      limits = c(domle(9.5), domle(mle) ))+
+  geom_line(color = "#08519c", alpha = 0.1)+
   labs(x = 'Time Post Dose', 
        y = 'Concentration', 
        subtitle = 'Plausible Concentrations\nAfter Seeing Data'
